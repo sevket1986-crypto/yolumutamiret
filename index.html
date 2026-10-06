@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Yolumu Tamir Et</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+        body, html { font-family:'Segoe UI',sans-serif; background:#eee; width:100%; }
+
+        /* === ANA KAPSAYICI: her zaman dikey akış === */
+        #uygulama { display:flex; flex-direction:column; width:100%; }
+
+        /* === HARİTA: her zaman görünür, sabit px yükseklik === */
+        #map { width:100%; height:320px; flex-shrink:0; z-index:1; }
+
+        /* === SIDEBAR: haritanın altında === */
+        .sidebar { position:relative; width:100%; background:#fff; display:flex; flex-direction:column; box-shadow:0 -4px 20px rgba(0,0,0,0.15); }
+        .header { background:#d63031; color:white; padding:15px; text-align:center; font-weight:700; font-size:1.1rem; }
+        .content { padding:20px; }
+        .footer { padding:15px; background:#fff; border-top:1px solid #eee; }
+
+        /* === MASAÜSTÜ: harita ve form yan yana === */
+        @media (min-width:900px) {
+            #uygulama { flex-direction:row; height:100vh; overflow:hidden; }
+            #map { height:100%; width:calc(100% - 400px); order:2; }
+            .sidebar { width:400px; order:1; height:100vh; overflow:hidden; }
+            .content { overflow-y:auto; flex:1; }
+            .header { border-radius:0; }
+        }
+
+        /* === ORTAK STILLER === */
+        .step-label { font-size:0.8rem; font-weight:700; color:#636e72; margin-top:15px; margin-bottom:6px; text-transform:uppercase; border-bottom:2px solid #dfe6e9; padding-bottom:4px; }
+        input, textarea { width:100%; padding:12px; border:1px solid #b2bec3; border-radius:6px; font-size:0.95rem; font-family:inherit; margin-bottom:8px; transition:border-color 0.2s; }
+        input:focus, textarea:focus { outline:none; border-color:#0984e3; }
+        textarea { resize:vertical; min-height:70px; }
+        input.hata, textarea.hata { border-color:#d63031 !important; background:#fff5f5; }
+        .hata-mesaj { font-size:0.75rem; color:#d63031; margin-top:-5px; margin-bottom:6px; display:none; }
+        .hata-mesaj.goster { display:block; }
+        .coord-box { background:#ffeaa7; color:#d35400; padding:10px; border-radius:6px; font-size:0.85rem; text-align:center; margin-bottom:10px; border:1px solid #fdcb6e; }
+        #lblAdres { display:block; margin-top:5px; font-weight:bold; color:#2d3436; font-size:0.9rem; }
+        .search-box { position:relative; }
+        #oneriListesi { position:absolute; top:100%; left:0; right:0; background:white; border:1px solid #d63031; border-top:none; border-radius:0 0 8px 8px; list-style:none; margin:0; padding:0; max-height:200px; overflow-y:auto; box-shadow:0 10px 20px rgba(0,0,0,0.2); z-index:1000; display:none; }
+        #oneriListesi li { padding:12px; border-bottom:1px solid #eee; cursor:pointer; font-size:0.9rem; }
+        #oneriListesi li:hover { background:#ffeaa7; font-weight:bold; }
+        #aramaDurumu { font-size:0.8rem; color:#b2bec3; display:none; margin-bottom:5px; }
+        .file-upload { background:#f1f2f6; border:2px dashed #b2bec3; padding:12px; text-align:center; border-radius:6px; cursor:pointer; color:#636e72; font-size:0.9rem; display:block; }
+        #preview { width:100%; border-radius:6px; margin-top:10px; display:none; object-fit:cover; height:120px; border:1px solid #ddd; }
+        .fiyat-panel { background:linear-gradient(135deg,#1e3c72,#2a5298); border-radius:10px; padding:14px; margin-top:12px; color:white; }
+        .fiyat-baslik { font-size:0.75rem; font-weight:700; opacity:0.8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; }
+        .fiyat-satirlar { display:flex; flex-direction:column; gap:5px; }
+        .fiyat-satir { display:flex; justify-content:space-between; font-size:0.85rem; opacity:0.9; }
+        .fiyat-satir span:last-child { font-weight:600; }
+        .fiyat-cizgi { border-top:1px solid rgba(255,255,255,0.3); margin:8px 0; }
+        .fiyat-toplam { display:flex; justify-content:space-between; font-size:1.1rem; font-weight:800; }
+        .fiyat-toplam .tutar { color:#ffeaa7; font-size:1.25rem; }
+        .m2-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+        .m2-row input { margin-bottom:0; width:100px; text-align:center; font-weight:bold; font-size:1rem; }
+        .m2-row label { font-size:0.9rem; color:#636e72; flex:1; }
+        .btn-check { width:100%; padding:14px; background:#0984e3; color:white; font-weight:bold; font-size:1rem; border:none; border-radius:6px; cursor:pointer; transition:0.3s; }
+        .btn-check:hover { background:#076ebc; }
+        .mesafe-badge { display:inline-block; background:#6c5ce7; color:white; padding:3px 9px; border-radius:20px; font-size:0.78rem; font-weight:700; margin-top:4px; }
+
+        /* Pin animasyonları */
+        @keyframes zipla3 {
+            0%        { transform: translateY(0); }
+            10%       { transform: translateY(-16px); }
+            20%       { transform: translateY(0); }
+            30%       { transform: translateY(-10px); }
+            40%       { transform: translateY(0); }
+            50%       { transform: translateY(-5px); }
+            60%, 100% { transform: translateY(0); }
+        }
+        @keyframes golge3 {
+            0%        { transform: translateX(-50%) scale(1);    opacity:0.35; }
+            10%       { transform: translateX(-50%) scale(0.45); opacity:0.12; }
+            20%       { transform: translateX(-50%) scale(1);    opacity:0.35; }
+            30%       { transform: translateX(-50%) scale(0.6);  opacity:0.2; }
+            40%       { transform: translateX(-50%) scale(1);    opacity:0.35; }
+            50%       { transform: translateX(-50%) scale(0.75); opacity:0.25; }
+            60%, 100% { transform: translateX(-50%) scale(1);    opacity:0.35; }
+        }
+        @keyframes pulse {
+            0%   { transform: translate(-50%,-50%) scale(1);   opacity:0.6; }
+            100% { transform: translate(-50%,-50%) scale(3);   opacity:0; }
+        }
+        .pin-wrapper  { position:relative; width:36px; height:56px; }
+        .pin-body     { animation: zipla3 1.8s ease-in-out 1 forwards; }
+        .pin-shadow   { position:absolute; bottom:0; left:50%;
+                        width:12px; height:4px; background:rgba(0,0,0,0.3);
+                        border-radius:50%; animation: golge3 1.8s ease-in-out 1 forwards; }
+        .pin-pulse    { position:absolute; top:18px; left:50%;
+                        width:18px; height:18px; border-radius:50%;
+                        background:rgba(214,48,49,0.5);
+                        animation: pulse 1.8s ease-out infinite; }
+        /* Zorunlu alan işareti */
+        .zorunlu { color:#d63031; margin-left:2px; }
+        /* MODAL */
+        .modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.55); z-index:2000; display:none; justify-content:center; align-items:center; backdrop-filter:blur(5px); }
+        .modal-box { background:white; width:90%; max-width:430px; border-radius:14px; padding:24px; box-shadow:0 10px 40px rgba(0,0,0,0.4); animation:slideUp 0.3s ease; max-height:92vh; overflow-y:auto; }
+        @keyframes slideUp { from{transform:translateY(24px);opacity:0} to{transform:translateY(0);opacity:1} }
+        .modal-title { font-size:1.15rem; font-weight:bold; color:#2d3436; margin-bottom:16px; text-align:center; }
+        .ozet-blok { background:#f8f9fa; border-radius:8px; padding:12px 14px; margin-bottom:10px; font-size:0.88rem; color:#636e72; line-height:1.6; }
+        .ozet-blok strong { color:#2d3436; display:block; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:2px; opacity:0.65; }
+        .ozet-foto { width:100%; height:130px; object-fit:cover; border-radius:6px; margin-top:6px; display:none; }
+        .modal-fiyat { background:linear-gradient(135deg,#1e3c72,#2a5298); border-radius:10px; padding:14px; color:white; margin:14px 0; }
+        .mf-baslik { font-size:0.73rem; font-weight:700; opacity:0.75; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
+        .mf-satirlar { display:flex; flex-direction:column; gap:6px; }
+        .mf-satir { display:flex; justify-content:space-between; font-size:0.85rem; opacity:0.9; }
+        .mf-satir span:last-child { font-weight:700; }
+        .mf-cizgi { border-top:1px solid rgba(255,255,255,0.3); margin:8px 0; }
+        .mf-toplam { display:flex; justify-content:space-between; font-size:1.1rem; font-weight:800; }
+        .mf-toplam .tutar { color:#ffeaa7; font-size:1.2rem; }
+        .btn-odeme { width:100%; padding:16px; margin-top:4px; background:linear-gradient(135deg,#00b894,#00cec9); color:white; font-weight:800; font-size:1.05rem; border:none; border-radius:8px; cursor:pointer; transition:0.25s; display:flex; align-items:center; justify-content:center; gap:10px; box-shadow:0 4px 16px rgba(0,184,148,0.35); }
+        .btn-odeme:hover { transform:scale(1.015); opacity:0.93; }
+        .btn-odeme:disabled { background:#b2bec3; cursor:wait; transform:none; box-shadow:none; }
+        .btn-geri { width:100%; padding:11px; margin-top:8px; background:#f1f2f6; color:#636e72; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem; font-weight:600; }
+        .basari-ekran { display:none; text-align:center; padding:16px 8px 8px; }
+        .basari-icon { font-size:3.5rem; margin-bottom:12px; }
+        .basari-ekran h3 { margin:0 0 8px; color:#00b894; font-size:1.2rem; }
+        .basari-ekran p { color:#636e72; font-size:0.9rem; margin:4px 0; }
+        .ref-kutu { background:#f8f9fa; border-radius:6px; padding:8px 12px; margin:12px 0; font-size:0.85rem; color:#2d3436; }
+        .ref-kutu span { font-weight:700; color:#0984e3; }
+        @media (max-width:768px) {
+            .sidebar { top:auto; bottom:0; left:0; right:0; width:100%; height:65%; border-radius:20px 20px 0 0; }
+            #map { height:35%; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="uygulama">
+<div id="map"></div>
+
+<div class="sidebar">
+    <div class="header"><i class="fas fa-tools"></i> Yolumu Tamir Et</div>
+    <div class="content">
+        <div class="step-label">1. Konum</div>
+        <div class="coord-box">
+            <i class="fas fa-map-pin"></i>
+            <span id="lblAdres">Adres aranıyor...</span>
+            <div style="font-size:0.75rem;opacity:0.8;margin-top:3px;" id="lblCoord">...</div>
+            <div id="mesafeBadge" class="mesafe-badge" style="display:none;"></div>
+        </div>
+        <div class="search-box">
+            <div style="font-size:0.78rem;color:#636e72;margin-bottom:5px;">📍 Pini hızlı taşımak için sokak veya cadde adı yazın</div>
+            <input type="text" id="adresInput" placeholder="Örn: Atatürk Caddesi" autocomplete="off">
+            <div id="aramaDurumu">Aranıyor...</div>
+            <ul id="oneriListesi"></ul>
+        </div>
+
+        <div class="step-label">2. Alan</div>
+        <div class="m2-row">
+            <input type="number" id="metrekare" value="1" min="1" step="1">
+            <label>m²  <span style="font-size:0.78rem;color:#b2bec3;">(en az 1 m²)</span></label>
+        </div>
+
+        <div class="fiyat-panel">
+            <div class="fiyat-baslik">💰 Tahmini Ücret</div>
+            <div class="fiyat-satirlar">
+                <div class="fiyat-satir">
+                    <span>🚗 Yol (<span id="fKm">0.0</span> km × 30 ₺)</span>
+                    <span><span id="fYolUcret">0</span> ₺</span>
+                </div>
+                <div class="fiyat-satir">
+                    <span>🔧 Servis ücreti</span>
+                    <span>1.000 ₺</span>
+                </div>
+                <div class="fiyat-satir">
+                    <span>📐 Alan (<span id="fM2">1</span> m² × 5.000 ₺)</span>
+                    <span><span id="fM2Ucret">5.000</span> ₺</span>
+                </div>
+            </div>
+            <div class="fiyat-cizgi"></div>
+            <div class="fiyat-toplam">
+                <span>TOPLAM</span>
+                <span class="tutar"><span id="fToplam">6.000</span> ₺</span>
+            </div>
+        </div>
+
+        <div class="step-label">3. Fotoğraf</div>
+        <label class="file-upload">
+            <i class="fas fa-camera"></i> Fotoğraf Ekle
+            <input type="file" id="foto" accept="image/*" style="display:none;" onchange="resmiHazirla()">
+        </label>
+        <img id="preview" src="">
+
+        <div class="step-label">4. Açıklama <span class="zorunlu">*</span></div>
+        <textarea id="description" placeholder="Sorunu kısaca tarif edin."></textarea>
+        <div class="hata-mesaj" id="err_aciklama">Açıklama alanı zorunludur.</div>
+
+        <div class="step-label">5. İletişim</div>
+        <div style="display:flex;gap:8px;">
+            <div style="flex:1;">
+                <input type="text" id="ad_soyad" placeholder="Ad Soyad *">
+                <div class="hata-mesaj" id="err_ad">Ad Soyad zorunludur.</div>
+            </div>
+            <div style="flex:1;">
+                <input type="tel" id="telefon" placeholder="Telefon *">
+                <div class="hata-mesaj" id="err_tel">Telefon zorunludur.</div>
+            </div>
+        </div>
+        <input type="email" id="email" placeholder="E-posta *">
+        <div class="hata-mesaj" id="err_email">Geçerli bir e-posta giriniz.</div>
+    </div>
+    <div class="footer">
+        <button onclick="kontrolEt()" class="btn-check">
+            <i class="fas fa-clipboard-check"></i> KONTROL ET
+        </button>
+    </div>
+</div>
+</div><!-- #uygulama -->
+
+<!-- MODAL -->
+<div id="onayModal" class="modal-overlay">
+    <div class="modal-box">
+        <div id="modalIcerik">
+            <div class="modal-title">📋 Bilgileri Onaylayın</div>
+            <div class="ozet-blok"><strong>📍 Adres</strong><span id="ozetAdres">—</span></div>
+            <div class="ozet-blok"><strong>💬 Açıklama</strong><span id="ozetSorun">—</span></div>
+            <div class="ozet-blok"><strong>👤 İletişim</strong><span id="ozetIletisim">—</span></div>
+            <div class="ozet-blok" id="fotoBlok" style="display:none;">
+                <strong>📸 Fotoğraf</strong>
+                <img id="ozetFoto" class="ozet-foto" src="">
+            </div>
+            <div class="modal-fiyat">
+                <div class="mf-baslik">💰 Ödeme Detayı</div>
+                <div class="mf-satirlar">
+                    <div class="mf-satir"><span>🚗 Yol (<span id="mKm">—</span> km × 30 ₺)</span><span><span id="mYol">—</span> ₺</span></div>
+                    <div class="mf-satir"><span>🔧 Servis ücreti</span><span>1.000 ₺</span></div>
+                    <div class="mf-satir"><span>📐 Alan (<span id="mM2">—</span> m² × 5.000 ₺)</span><span><span id="mM2Ucret">—</span> ₺</span></div>
+                </div>
+                <div class="mf-cizgi"></div>
+                <div class="mf-toplam"><span>TOPLAM TUTAR</span><span class="tutar"><span id="mToplam">—</span> ₺</span></div>
+            </div>
+            <!-- İade notu -->
+            <div id="iadeNotu" style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 14px;margin:12px 0;font-size:0.83rem;color:#5d4037;line-height:1.6;">
+                <div style="font-weight:700;margin-bottom:4px;">⚠️ Ödeme Bilgilendirmesi</div>
+                Tahmini tutarınız <strong id="notTahmini">—</strong> ₺'dir. Kartınızdan
+                <strong id="notKesilen">—</strong> ₺ çekilecektir.<br>
+                İş tamamlandıktan sonra net tutar hesaplanarak <strong>fark tarafınıza iade edilecektir.</strong>
+            </div>
+
+            <button id="btnOdeme" onclick="odemeGecirildi()" class="btn-odeme">
+                <i class="fas fa-lock"></i> ÖDEMEYE GEÇ
+            </button>
+            <button onclick="modalKapat()" class="btn-geri">← Geri Dön / Düzenle</button>
+        </div>
+
+        <div id="basariEkran" class="basari-ekran">
+            <div class="basari-icon">✅</div>
+            <h3>Talebiniz Alındı!</h3>
+            <p>Bilgileriniz sisteme kaydedildi.</p>
+            <div class="ref-kutu">Referans: <span id="refKodGoster">—</span></div>
+            <p style="font-size:0.88rem;margin-top:12px;color:#636e72;">Ödeme sayfasına yönlendiriliyorsunuz...</p>
+            <!-- Sayaç -->
+            <div style="margin:16px auto 0;width:80px;height:80px;position:relative;">
+                <svg width="80" height="80" style="transform:rotate(-90deg);">
+                    <circle cx="40" cy="40" r="34" fill="none" stroke="#e0e0e0" stroke-width="6"/>
+                    <circle id="sayacCember" cx="40" cy="40" r="34" fill="none" stroke="#00b894" stroke-width="6"
+                        stroke-dasharray="213.6" stroke-dashoffset="0"
+                        style="transition:stroke-dashoffset 1s linear;"/>
+                </svg>
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:1.6rem;font-weight:800;color:#2d3436;">
+                    <span id="sayacRakam">10</span>
+                </div>
+            </div>
+            <p style="font-size:0.78rem;color:#b2bec3;margin-top:10px;">saniye sonra ödeme sayfası açılacak</p>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // ============================================================
+    //  AYARLAR
+    // ============================================================
+    var GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwsXfMx9QzqoF1kxMUEK-GibfelnYWZwbmOyAajI4bAI294i9_3kC_htYAjk3patCMY/exec";
+
+    var merkezLat = 38.7226;
+    var merkezLng = 35.4869;
+
+    var KM_BIRIM     = 30;
+    var SERVIS_UCRET = 1000;
+    var M2_BIRIM     = 5000;
+    var MIN_M2       = 1;
+
+    // Her aralık için: tahmini tutar üst sınırı, iyzico linki ve karttan kesilecek tutar
+    var IYZICO_LINKLER = [
+        { maxTutar: 10000, kesilen: 10000, link: "https://iyzi.link/AKxmWg" },  // 0 – 10.000 ₺
+        { maxTutar: 20000, kesilen: 20000, link: "https://iyzi.link/AKxmZQ" },  // 10.001 – 20.000 ₺
+        { maxTutar: 99999999, kesilen: 30000, link: "https://iyzi.link/AKxmZg" } // 20.001 ₺ ve üzeri
+    ];
+    // ============================================================
+
+    var secilenLat = merkezLat, secilenLng = merkezLng;
+    var secilenAdresMetni = "";
+    var hesaplananToplam  = 0;
+    var secilenResimBase64 = "";
+
+    // --- HARİTA ---
+    var googleUydu  = L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{maxZoom:20,subdomains:['mt0','mt1','mt2','mt3']});
+    var googleSokak = L.tileLayer('http://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',{maxZoom:20,subdomains:['mt0','mt1','mt2','mt3']});
+    var googleArazi = L.tileLayer('http://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',{maxZoom:20,subdomains:['mt0','mt1','mt2','mt3']});
+    var map = L.map('map',{center:[merkezLat,merkezLng],zoom:14,layers:[googleUydu],zoomControl:false});
+    L.control.zoom({position:'bottomright'}).addTo(map);
+    L.control.layers({"Uydu":googleUydu,"Sokak":googleSokak,"Arazi":googleArazi},null,{position:'topright'}).addTo(map);
+    // Özel animasyonlu pin
+    var pinIcon = L.divIcon({
+        className: '',
+        html: '<div class="pin-wrapper">'
+            + '<div class="pin-pulse"></div>'
+            + '<div class="pin-body">'
+            + '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="50" viewBox="0 0 36 50" style="filter:drop-shadow(0 4px 6px rgba(0,0,0,0.5));">'
+            + '<path d="M18 0C8 0 0 8 0 18c0 12 18 32 18 32S36 30 36 18C36 8 28 0 18 0z" fill="#d63031"/>'
+            + '<circle cx="18" cy="18" r="8" fill="white"/>'
+            + '<circle cx="18" cy="18" r="4" fill="#d63031"/>'
+            + '</svg>'
+            + '</div>'
+            + '<div class="pin-shadow"></div>'
+            + '</div>',
+        iconSize: [36, 56],
+        iconAnchor: [18, 50],
+        popupAnchor: [0, -52]
+    });
+
+    var marker = L.marker([merkezLat,merkezLng],{draggable:true,autoPan:true,icon:pinIcon}).addTo(map);
+    marker.bindPopup("<b>📍 Pini sürükleyerek konumu seçin.</b>").openPopup();
+    konumGuncelle(merkezLat,merkezLng);
+    // Haritanın container boyutunu doğru algılaması için
+    setTimeout(function(){ map.invalidateSize(); }, 300);
+
+    marker.on('dragend', function() {
+        var p = marker.getLatLng();
+        konumGuncelle(p.lat, p.lng);
+        // Animasyonu sıfırla — bırakınca tekrar 3 kez zıplar
+        var el = document.querySelector('.pin-body');
+        var sh = document.querySelector('.pin-shadow');
+        if (el) { el.style.animation='none'; void el.offsetWidth; el.style.animation=''; }
+        if (sh) { sh.style.animation='none'; void sh.offsetWidth; sh.style.animation=''; }
+    });
+
+    function haversine(la1,lo1,la2,lo2){
+        var R=6371,dLa=(la2-la1)*Math.PI/180,dLo=(lo2-lo1)*Math.PI/180;
+        var a=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)*Math.sin(dLo/2);
+        return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    }
+
+    function fiyatHesapla(){
+        var km=haversine(merkezLat,merkezLng,secilenLat,secilenLng);
+        var m2=Math.max(MIN_M2,parseInt(document.getElementById('metrekare').value)||MIN_M2);
+        var yol=Math.round(km*KM_BIRIM), m2u=m2*M2_BIRIM;
+        hesaplananToplam=yol+SERVIS_UCRET+m2u;
+        document.getElementById('fKm').innerText=km.toFixed(1);
+        document.getElementById('fYolUcret').innerText=yol.toLocaleString('tr-TR');
+        document.getElementById('fM2').innerText=m2;
+        document.getElementById('fM2Ucret').innerText=m2u.toLocaleString('tr-TR');
+        document.getElementById('fToplam').innerText=hesaplananToplam.toLocaleString('tr-TR');
+        var b=document.getElementById('mesafeBadge');
+        b.innerText="📏 "+km.toFixed(2)+" km merkeze"; b.style.display="inline-block";
+    }
+
+    function konumGuncelle(lat,lng){
+        secilenLat=parseFloat(lat); secilenLng=parseFloat(lng);
+        document.getElementById('lblCoord').innerText=secilenLat.toFixed(5)+", "+secilenLng.toFixed(5);
+        document.getElementById('lblAdres').innerText="Adres çözümleniyor...";
+        fiyatHesapla();
+        fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat="+lat+"&lon="+lng)
+        .then(r=>r.json()).then(d=>{ secilenAdresMetni=d.display_name; document.getElementById('lblAdres').innerText=secilenAdresMetni; })
+        .catch(()=>{ document.getElementById('lblAdres').innerText="Adres bulunamadı"; });
+    }
+    document.getElementById('metrekare').addEventListener('input',fiyatHesapla);
+
+    var inputEl=document.getElementById('adresInput'),listeEl=document.getElementById('oneriListesi'),durumEl=document.getElementById('aramaDurumu'),t;
+    inputEl.addEventListener('input',function(){
+        clearTimeout(t);
+        if(this.value.length<3){listeEl.style.display='none';durumEl.style.display='none';return;}
+        durumEl.style.display='block';
+        t=setTimeout(()=>ara(this.value),500);
+    });
+    function ara(q){
+        fetch("https://nominatim.openstreetmap.org/search?format=json&q="+encodeURIComponent(q+" Kayseri")+"&countrycodes=tr&addressdetails=1&limit=6")
+        .then(r=>r.json()).then(data=>{
+            durumEl.style.display='none'; listeEl.innerHTML='';
+            if(!data.length){listeEl.style.display='none';return;}
+            listeEl.style.display='block';
+            data.forEach(y=>{
+                var baslik=y.display_name.split(",")[0];
+                var mah=y.address.suburb||y.address.neighbourhood||"";
+                var ilce=y.address.town||y.address.district||"";
+                var li=document.createElement('li');
+                li.innerText="📍 "+baslik+(mah?" - "+mah:"")+(ilce?" ("+ilce+")":"");
+                li.onclick=function(){ map.setView([y.lat,y.lon],17); marker.setLatLng([y.lat,y.lon]); konumGuncelle(y.lat,y.lon); listeEl.style.display='none'; inputEl.value=baslik; };
+                listeEl.appendChild(li);
+            });
+        });
+    }
+    document.addEventListener('click',function(e){ if(e.target!==inputEl) listeEl.style.display='none'; });
+
+    function resmiHazirla(){
+        var f=document.getElementById('foto').files[0]; if(!f) return;
+        if(f.size>5*1024*1024){alert("Max 5MB!");return;}
+        var r=new FileReader();
+        r.onloadend=function(){ secilenResimBase64=r.result; document.getElementById('preview').src=secilenResimBase64; document.getElementById('preview').style.display='block'; };
+        r.readAsDataURL(f);
+    }
+
+    function iyzicoSecenekBul(tutar){
+        for(var i=0;i<IYZICO_LINKLER.length;i++){
+            if(tutar<=IYZICO_LINKLER[i].maxTutar) return IYZICO_LINKLER[i];
+        }
+        return null; // 30.000 ₺ üzeri — online ödeme yok
+    }
+
+    // --- ZORUNLU ALAN DOĞRULAMA ---
+    function alaniTemizle(id, errId) {
+        document.getElementById(id).classList.remove('hata');
+        document.getElementById(errId).classList.remove('goster');
+    }
+
+    function alaniIsaretle(id, errId) {
+        document.getElementById(id).classList.add('hata');
+        document.getElementById(errId).classList.add('goster');
+        return false;
+    }
+
+    function emailGecerliMi(email) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    // Kullanıcı yazmaya başlayınca hata işaretini kaldır
+    ['ad_soyad','telefon','email','description'].forEach(function(id) {
+        document.getElementById(id).addEventListener('input', function() {
+            this.classList.remove('hata');
+            var errMap = {ad_soyad:'err_ad', telefon:'err_tel', email:'err_email', description:'err_aciklama'};
+            document.getElementById(errMap[id]).classList.remove('goster');
+        });
+    });
+
+    function formuDogrula() {
+        var gecerli = true;
+
+        var ad    = document.getElementById('ad_soyad').value.trim();
+        var tel   = document.getElementById('telefon').value.trim();
+        var mail  = document.getElementById('email').value.trim();
+        var acik  = document.getElementById('description').value.trim();
+
+        // Önce hepsini temizle
+        alaniTemizle('ad_soyad','err_ad');
+        alaniTemizle('telefon','err_tel');
+        alaniTemizle('email','err_email');
+        alaniTemizle('description','err_aciklama');
+
+        if (!acik)  { alaniIsaretle('description','err_aciklama'); gecerli=false; }
+        if (!mail || !emailGecerliMi(mail)) { alaniIsaretle('email','err_email'); gecerli=false; }
+        if (!tel)   { alaniIsaretle('telefon','err_tel'); gecerli=false; }
+        if (!ad)    { alaniIsaretle('ad_soyad','err_ad'); gecerli=false; }
+
+        // İlk hatalı alana scroll
+        if (!gecerli) {
+            var ilkHata = document.querySelector('.hata');
+            if (ilkHata) ilkHata.scrollIntoView({behavior:'smooth', block:'center'});
+        }
+
+        return gecerli;
+    }
+
+    // --- KONTROL ET ---
+    function kontrolEt(){
+        if(!secilenAdresMetni || secilenAdresMetni === "Adres aranıyor...") {
+            alert("Lütfen haritadan konum seçin."); return;
+        }
+
+        // Zorunlu alan kontrolü
+        if (!formuDogrula()) return;
+
+        var km=haversine(merkezLat,merkezLng,secilenLat,secilenLng);
+        var m2=Math.max(MIN_M2,parseInt(document.getElementById('metrekare').value)||MIN_M2);
+        var yol=Math.round(km*KM_BIRIM), m2u=m2*M2_BIRIM;
+        hesaplananToplam=yol+SERVIS_UCRET+m2u;
+
+        document.getElementById('mKm').innerText=km.toFixed(1);
+        document.getElementById('mYol').innerText=yol.toLocaleString('tr-TR');
+        document.getElementById('mM2').innerText=m2;
+        document.getElementById('mM2Ucret').innerText=m2u.toLocaleString('tr-TR');
+        document.getElementById('mToplam').innerText=hesaplananToplam.toLocaleString('tr-TR');
+
+        var ad  = document.getElementById('ad_soyad').value.trim();
+        var tel = document.getElementById('telefon').value.trim();
+        var mail= document.getElementById('email').value.trim();
+        document.getElementById('ozetAdres').innerText=secilenAdresMetni;
+        document.getElementById('ozetSorun').innerText=document.getElementById('description').value.trim();
+        document.getElementById('ozetIletisim').innerText=ad+" | "+tel+" | "+mail;
+
+        if(secilenResimBase64){
+            document.getElementById('ozetFoto').src=secilenResimBase64;
+            document.getElementById('ozetFoto').style.display='block';
+            document.getElementById('fotoBlok').style.display='block';
+        } else { document.getElementById('fotoBlok').style.display='none'; }
+
+        // İade notunu doldur
+        var secenek = iyzicoSecenekBul(hesaplananToplam);
+        document.getElementById('notTahmini').innerText = hesaplananToplam.toLocaleString('tr-TR');
+        document.getElementById('notKesilen').innerText = secenek.kesilen.toLocaleString('tr-TR');
+        document.getElementById('iadeNotu').style.display = 'block';
+
+        document.getElementById('modalIcerik').style.display='block';
+        document.getElementById('basariEkran').style.display='none';
+        document.getElementById('btnOdeme').disabled=false;
+        document.getElementById('btnOdeme').innerHTML='<i class="fas fa-lock"></i> ÖDEMEYE GEÇ';
+        document.getElementById('onayModal').style.display='flex';
+    }
+
+    function modalKapat(){ document.getElementById('onayModal').style.display='none'; }
+
+    // --- ÖDEMEYE GEÇ ---
+    function odemeGecirildi() {
+        var btn = document.getElementById('btnOdeme');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> İşleniyor...';
+
+        var km = haversine(merkezLat, merkezLng, secilenLat, secilenLng);
+        var m2 = Math.max(MIN_M2, parseInt(document.getElementById('metrekare').value) || MIN_M2);
+        var yol = Math.round(km * KM_BIRIM);
+        var m2u = m2 * M2_BIRIM;
+        var refKod = "YT-" + new Date().toISOString().slice(0,10).replace(/-/g,'') + "-" + Math.floor(Math.random()*9000+1000);
+
+        var veriler = {
+            referans: refKod,
+            tarih: new Date().toLocaleString('tr-TR'),
+            ad_soyad: document.getElementById('ad_soyad').value.trim(),
+            telefon: document.getElementById('telefon').value.trim(),
+            email: document.getElementById('email').value.trim(),
+            adres: secilenAdresMetni,
+            aciklama: document.getElementById('description').value.trim(),
+            lat: secilenLat,
+            lng: secilenLng,
+            mesafe_km: km.toFixed(2),
+            alan_m2: m2,
+            yol_ucret_tl: yol,
+            servis_tl: SERVIS_UCRET,
+            alan_ucret_tl: m2u,
+            toplam_tl: hesaplananToplam,
+            odeme_durumu: "⏳ Beklemede",
+            foto: secilenResimBase64
+        };
+
+        fetch(GOOGLE_SCRIPT_URL, {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(veriler)
+        }).then(function() {
+            document.getElementById('refKodGoster').innerText = refKod;
+            document.getElementById('modalIcerik').style.display = 'none';
+            document.getElementById('basariEkran').style.display = 'block';
+
+            // 10 saniyelik geri sayım
+            var kalan = 10;
+            var hedefLink = iyzicoSecenekBul(hesaplananToplam).link;
+            var cevre = 2 * Math.PI * 34; // ~213.6
+
+            document.getElementById('sayacRakam').innerText = kalan;
+            document.getElementById('sayacCember').style.strokeDashoffset = 0;
+
+            var sayacInterval = setInterval(function() {
+                kalan--;
+                document.getElementById('sayacRakam').innerText = kalan;
+                // Daireyi tüketiyoruz (0 → tam çevre)
+                var offset = cevre * (1 - kalan / 10);
+                document.getElementById('sayacCember').style.strokeDashoffset = offset;
+
+                if (kalan <= 0) {
+                    clearInterval(sayacInterval);
+                    window.location.href = hedefLink;
+                }
+            }, 1000);
+        }).catch(function() {
+            alert("Bağlantı hatası: Lütfen internetinizi kontrol edin.");
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-lock"></i> ÖDEMEYE GEÇ';
+        });
+    }
+</script>
+</body>
+</html>
